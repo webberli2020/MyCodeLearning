@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>干支历滚轮调节</title>
+    <style>
+        :root { --accent: #c0392b; --bg: #f4f4f7; --item-h: 40px; }
+        body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); margin: 0; display: flex; justify-content: center; overflow: hidden; }
+        .container { background: #fff; width: 100%; max-width: 500px; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; }
+        
+        h2 { text-align: center; color: #333; font-size: 1.2rem; margin: 10px 0 20px; }
+
+        /* 滚轮选择器容器 */
+        .picker-group { 
+            display: flex; align-items: center; justify-content: center; 
+            background: #eee; border-radius: 16px; padding: 10px 5px;
+            position: relative; margin-bottom: 30px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        /* 选中状态的高亮条 */
+        .picker-highlight {
+            position: absolute; left: 10px; right: 10px; top: 50%; height: var(--item-h);
+            transform: translateY(-50%); background: rgba(0,0,0,0.05); 
+            border-top: 1px solid #ddd; border-bottom: 1px solid #ddd;
+            pointer-events: none; z-index: 1;
+        }
+
+        .picker-col { 
+            flex: 1; height: calc(var(--item-h) * 5); overflow-y: scroll; 
+            scroll-snap-type: y mandatory; position: relative; scrollbar-width: none; 
+        }
+        .picker-col::-webkit-scrollbar { display: none; }
+        
+        .picker-list { padding: calc(var(--item-h) * 2) 0; }
+        .picker-item { 
+            height: var(--item-h); line-height: var(--item-h); text-align: center; 
+            scroll-snap-align: center; font-size: 16px; color: #888; transition: 0.2s;
+        }
+        .picker-item.selected { color: var(--accent); font-weight: bold; font-size: 18px; }
+
+        /* 结果显示 */
+        .gz-card { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        .pillar { background: #fffcf5; border: 1px solid #f2e6d5; border-radius: 12px; padding: 20px 0; text-align: center; }
+        .p-head { font-size: 11px; color: #998c7e; margin-bottom: 8px; }
+        .p-body { font-size: 1.8rem; font-weight: 900; color: var(--accent); }
+        .p-animal { font-size: 13px; color: #666; margin-top: 5px; }
+
+        .footer { text-align: center; margin-top: auto; padding-bottom: 20px; color: #999; font-size: 13px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>时间滚轮校对</h2>
+
+    <div class="picker-group">
+        <div class="picker-highlight"></div>
+        <div class="picker-col" id="col-y">
+            <div class="picker-list" id="list-y"></div>
+        </div>
+        <div class="picker-col" id="col-m">
+            <div class="picker-list" id="list-m"></div>
+        </div>
+        <div class="picker-col" id="col-d">
+            <div class="picker-list" id="list-d"></div>
+        </div>
+        <div class="picker-col" id="col-h">
+            <div class="picker-list" id="list-h"></div>
+        </div>
+    </div>
+
+    <div class="gz-card">
+        <div class="pillar"><div class="p-head">年柱</div><div id="outY" class="p-body">--</div><div id="outA" class="p-animal"></div></div>
+        <div class="pillar"><div class="p-head">月柱</div><div id="outM" class="p-body">--</div></div>
+        <div class="pillar"><div class="p-head">日柱</div><div id="outD" class="p-body">--</div></div>
+        <div class="pillar"><div class="p-head">时柱</div><div id="outH" class="p-body">--</div></div>
+    </div>
+
+    <div class="footer" id="fullStr">滑动上方滑块以调整时间</div>
+</div>
+
+<script>
+    const Gan = "甲乙丙丁戊己庚辛壬癸", Zhi = "子丑寅卯辰巳午未申酉戌亥", Animals = "鼠牛虎兔龙蛇马羊猴鸡狗猪";
+    
+    // 模拟节气计算
+    function getTerm(y, n) {
+        const off = [0, 21208, 42467, 63836, 85337, 107014, 128867, 150921, 173149, 195551, 218072, 240693, 263343, 285989, 308563, 331033, 353350, 375494, 397447, 419210, 440795, 462224, 483532, 504758];
+        const d = new Date((31556925974.7 * (y - 1900) + off[n] * 60000) + Date.UTC(1900, 0, 6, 2, 5));
+        return d.getUTCDate();
+    }
+
+    // 你提供的正确算法
+    function getFullGZ(date) {
+        const y = date.getFullYear(), m = date.getMonth(), d = date.getDate(), h = date.getHours();
+        let gzYear = y;
+        let lcDay = getTerm(y, 2); 
+        if (m < 1 || (m === 1 && d < lcDay)) gzYear = y - 1;
+        let yIdx = (gzYear - 3) % 60;
+        if (yIdx <= 0) yIdx += 60;
+        let gzY = Gan[(yIdx - 1) % 10] + Zhi[(yIdx - 1) % 12];
+        let animal = Animals[(yIdx - 1) % 12];
+        let mIdx = (y - 1900) * 12 + m + 13;
+        let t1d = getTerm(y, m * 2); 
+        if (d >= t1d) mIdx++;
+        let gzM = Gan[(mIdx - 1) % 10] + Zhi[(mIdx - 1) % 12];
+        const baseDate = Date.UTC(1900, 0, 31);
+        const targetDate = Date.UTC(y, m, d);
+        const offset = Math.round((targetDate - baseDate) / 86400000);
+        let dIdx = (offset + 40) % 60;
+        if (dIdx < 0) dIdx += 60;
+        let gzD = Gan[dIdx % 10] + Zhi[dIdx % 12];
+        let zhiHIdx = Math.floor((h + 1) / 2) % 12;
+        let dayGanIdx = dIdx % 10; 
+        let startHourGanIdx = (dayGanIdx % 5) * 2; 
+        let gzH = Gan[(startHourGanIdx + zhiHIdx) % 10] + Zhi[zhiHIdx];
+        return { gzY, gzM, gzD, gzH, animal };
+    }
+
+    // 生成滚轮数据
+    function createPicker(id, min, max, unit) {
+        const list = document.getElementById('list-' + id);
+        for (let i = min; i <= max; i++) {
+            const div = document.createElement('div');
+            div.className = 'picker-item';
+            div.innerText = i + unit;
+            div.dataset.val = i;
+            list.appendChild(div);
+        }
+    }
+
+    const state = { y: 2026, m: 3, d: 11, h: 14 };
+
+    function initPickers() {
+        createPicker('y', 1901, 2100, '');
+        createPicker('m', 1, 12, '');
+        createPicker('d', 1, 31, '');
+        createPicker('h', 0, 23, '');
+
+        ['y','m','d','h'].forEach(key => {
+            const col = document.getElementById('col-' + key);
+            col.addEventListener('scroll', () => {
+                const idx = Math.round(col.scrollTop / 40);
+                const items = col.getElementsByClassName('picker-item');
+                if(items[idx]) {
+                    const newVal = parseInt(items[idx].dataset.val);
+                    if(state[key] !== newVal) {
+                        state[key] = newVal;
+                        updateResult();
+                    }
+                    // 高亮视觉效果
+                    Array.from(items).forEach((item, i) => {
+                        item.classList.toggle('selected', i === idx);
+                    });
+                }
+            });
+        });
+    }
+
+    function scrollToVal(key, val) {
+        const col = document.getElementById('col-' + key);
+        const items = Array.from(col.getElementsByClassName('picker-item'));
+        const idx = items.findIndex(item => parseInt(item.dataset.val) === val);
+        if(idx !== -1) col.scrollTop = idx * 40;
+    }
+
+    function updateResult() {
+        const date = new Date(state.y, state.m - 1, state.d, state.h);
+        const res = getFullGZ(date);
+        document.getElementById('outY').innerText = res.gzY;
+        document.getElementById('outM').innerText = res.gzM;
+        document.getElementById('outD').innerText = res.gzD;
+        document.getElementById('outH').innerText = res.gzH;
+        document.getElementById('outA').innerText = res.animal;
+        document.getElementById('fullStr').innerText = `${state.y}年${state.m}月${state.d}日 ${state.h}时`;
+    }
+
+    window.onload = () => {
+        initPickers();
+        const now = new Date();
+        state.y = now.getFullYear(); state.m = now.getMonth() + 1;
+        state.d = now.getDate(); state.h = now.getHours();
+        setTimeout(() => {
+            ['y','m','d','h'].forEach(k => scrollToVal(k, state[k]));
+            updateResult();
+        }, 100);
+    };
+</script>
+</body>
+</html>
