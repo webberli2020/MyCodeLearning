@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>员工休假组合计算系统 (支持拆分休假)</title>
+    <style>
+        :root { 
+            --weekend-color: #ff4d4f; 
+            --workday-color: #52c41a; 
+            --primary-color: #1890ff; 
+            --range-bg: #e6f7ff; 
+        }
+        
+        /* 1. 将页面设为全屏高度，禁止全局滚动 */
+        html, body { 
+            height: 100vh; 
+            margin: 0; 
+            overflow: hidden; 
+        }
+        
+        /* 2. body 使用 Flex 垂直布局 */
+        body { 
+            font-family: -apple-system, sans-serif; 
+            background: #f0f2f5; 
+            padding: 15px; 
+            font-size: 14px; 
+            display: flex; 
+            flex-direction: column; 
+            box-sizing: border-box; 
+        }
+        
+        /* 3. 头部区域保持固定高度，不被压缩 */
+        .header { 
+            background: white; 
+            padding: 15px 20px; 
+            border-radius: 8px; 
+            margin-bottom: 15px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05); 
+            flex-shrink: 0; 
+        }
+        
+        .main-title { text-align: center; color: #333; margin: 0 0 15px 0; font-size: 1.3em; font-weight: bold; border-bottom: 2px solid var(--primary-color); display: inline-block; width: 100%; padding-bottom: 5px; }
+        
+        .day { padding: 8px 0; border-radius: 4px; position: relative; cursor: pointer; margin: 1px; }
+        .holiday::after { content: '休'; position: absolute; top: -1px; right: 1px; font-size: 10px; color: var(--weekend-color); font-weight: bold; }
+        .workday-override::after { content: '班'; position: absolute; top: -1px; right: 1px; font-size: 10px; color: var(--workday-color); font-weight: bold; }
+        
+        .selected-point { background-color: var(--primary-color) !important; color: white !important; font-weight: bold; }
+        .in-range { background-color: var(--range-bg); }
+        .weekend { color: var(--weekend-color); }
+        
+        /* 4. 日历容器占满剩余空间，且内部支持垂直滚动。使用 Grid 严格分为 2 列 */
+        .calendar-grid { 
+            flex: 1; 
+            overflow-y: auto; 
+            display: grid; 
+            grid-template-columns: repeat(2, 1fr); 
+            gap: 15px; 
+            padding-right: 5px; /* 留出滚动条空间 */
+            align-content: start; 
+        }
+        
+        /* 美化日历区域的滚动条 (WebKit浏览器有效) */
+        .calendar-grid::-webkit-scrollbar { width: 8px; }
+        .calendar-grid::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+        .calendar-grid::-webkit-scrollbar-track { background: transparent; }
+
+        .month-container { 
+            background: white; 
+            border-radius: 6px; 
+            padding: 10px; 
+            box-sizing: border-box; 
+            min-width: 300px; 
+            border: 1px solid #eee; 
+        }
+        
+        .month-title { text-align: center; font-weight: bold; margin-bottom: 10px; padding: 4px; background: #fafafa; border-radius: 4px; }
+        .days-grid { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; }
+        
+        .leave-section { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; background: #f9f9f9; padding: 12px; border-radius: 6px; }
+        .leave-item { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: white; border: 1px solid #eee; border-radius: 4px; }
+        .seq-badge { background: var(--primary-color); color: white; border-radius: 50%; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+        
+        .stats-bar { display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
+        .stat-item { flex: 1; background: white; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #eee; }
+        .stat-val { font-size: 16px; font-weight: bold; color: var(--primary-color); display: block; }
+        .start-end-box { background: var(--primary-color) !important; color: white !important; }
+        .start-end-box .stat-val { color: white; }
+        
+        input[type="number"] { width: 45px; padding: 2px 5px; border: 1px solid #ddd; border-radius: 3px; }
+        .limit-hint { font-size: 11px; color: #999; margin-left: -5px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div id="dynamicTitle" class="main-title">员工休假组合计算系统 (支持拆分休假)</div>
+    <div style="display:flex; gap:15px; margin-bottom:12px; align-items:center;">
+        <strong>单位：</strong><select id="companySelect" onchange="updateYearOptions()"></select>
+        <strong>年度：</strong><select id="yearSelect" onchange="initCalendar()"></select>
+        <button onclick="clearSelection()" style="margin-left:auto">重置清空</button>
+    </div>
+
+    <div class="leave-section">
+        <div class="leave-item">
+            <input type="checkbox" id="annual" onchange="handleQueue(this)">
+            <span class="seq-badge" id="annual-seq"></span>
+            <span>年休假：</span>
+            <input type="number" id="annualDays" value="15" min="1" max="15" oninput="reCalculate()">
+            <span class="limit-hint">天 (≤15)</span>
+        </div>
+        <div class="leave-item">
+            <input type="checkbox" id="term" onchange="handleQueue(this)">
+            <span class="seq-badge" id="term-seq"></span>
+            <span>任期假：</span>
+            <input type="number" id="termDays" value="20" min="1" max="20" oninput="reCalculate()">
+            <span class="limit-hint">天 (≤20)</span>
+        </div>
+        <div class="leave-item">
+            <input type="checkbox" id="personal" onchange="handleQueue(this)">
+            <span class="seq-badge" id="personal-seq"></span>
+            <span>事假：</span>
+            <input type="number" id="personalDays" value="1" min="1" oninput="reCalculate()">天
+        </div>
+        <div class="leave-item">
+            <input type="checkbox" id="travel" onchange="handleQueue(this)">
+            <span class="seq-badge" id="travel-seq"></span>
+            <span>路途假 :</span>
+            <input type="number" id="travelDays" value="2" min="1" max="4" oninput="reCalculate()">天
+        </div>
+    </div>
+
+    <div class="stats-bar">
+        <div class="stat-item start-end-box">开始日期<span id="resStart" class="stat-val">-</span></div>
+        <div class="stat-item">工作日<span id="resWork" class="stat-val">0</span></div>
+        <div class="stat-item">节假日<span id="resHoli" class="stat-val">0</span></div>
+        <div class="stat-item">周末<span id="resWeek" class="stat-val">0</span></div>
+        <div class="stat-item start-end-box">截止日期<span id="resEnd" class="stat-val">-</span></div>
+    </div>
+</div>
+
+<div id="board" class="calendar-grid"></div>
+
+<script>
+    const CONFIG = {
+        "驻巴西使馆": {
+            "2025": { holidays: ['01-01','01-28','01-29','01-30','01-31','04-04','05-01','05-02','05-30','09-30','10-01','10-02','10-03'], extraWorkdays: [] },
+            "2026": { holidays: ['01-01','02-16','02-17','02-18','02-19','04-06','05-01','05-04','06-19','09-25','10-01','10-02','10-05'], extraWorkdays: [] }
+        },
+        "部机关": {
+            "2025": { holidays: ['01-01','01-28','01-29','01-30','01-31','02-03','02-04','04-04','05-01','05-02','05-05','06-02','09-30','10-01','10-02','10-03','10-06','10-07','10-08'], extraWorkdays: ['01-26','02-08','04-27','09-28','10-11'] },
+            "2026": { holidays: ['01-01','01-02','02-16','02-17','02-18','02-19','02-20','02-23','04-06','05-01','05-04','05-05','06-19','09-25','10-01','10-02','10-05','10-06','10-07'], extraWorkdays: ['01-04','02-14','02-28','05-09','09-20','10-10'] }
+        }
+    };
+
+    let startDateStr = null, finalEndDateStr = null, leaveQueue = [];
+
+    function initSelectors() {
+        const cSelect = document.getElementById('companySelect');
+        const companies = Object.keys(CONFIG);
+        companies.forEach(c => cSelect.add(new Option(c, c)));
+        if (companies.length > 0) cSelect.selectedIndex = 0;
+        updateYearOptions(true);
+    }
+
+    function updateYearOptions(isInitial = false) {
+        const company = document.getElementById('companySelect').value;
+        const ySelect = document.getElementById('yearSelect');
+        const years = Object.keys(CONFIG[company]);
+        ySelect.innerHTML = '';
+        years.forEach(y => ySelect.add(new Option(y, y)));
+        if (isInitial) {
+            const curY = new Date().getFullYear().toString();
+            const idx = years.indexOf(curY);
+            ySelect.selectedIndex = idx !== -1 ? idx : 0;
+        }
+        initCalendar();
+    }
+
+    function getDayType(date) {
+        const y = date.getFullYear();
+        const mmdd = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        const company = document.getElementById('companySelect').value;
+        const conf = CONFIG[company] && CONFIG[company][y] ? CONFIG[company][y] : { holidays: [], extraWorkdays: [] };
+        if (conf.holidays.includes(mmdd)) return 'holiday';
+        if (conf.extraWorkdays.includes(mmdd)) return 'workday-override';
+        const day = date.getDay();
+        return (day === 0 || day === 6) ? 'weekend' : 'normal';
+    }
+
+    function handleDateClick(dateStr) {
+        startDateStr = dateStr;
+        document.getElementById('resStart').innerText = dateStr;
+        reCalculate();
+    }
+
+    function handleQueue(checkbox) {
+        if (checkbox.checked) leaveQueue.push(checkbox.id);
+        else leaveQueue = leaveQueue.filter(i => i !== checkbox.id);
+        updateSeqBadges(); reCalculate();
+    }
+
+    function updateSeqBadges() {
+        ['annual', 'term', 'personal', 'travel'].forEach(id => {
+            const idx = leaveQueue.indexOf(id);
+            document.getElementById(id + '-seq').innerText = idx !== -1 ? (idx + 1) : '';
+        });
+    }
+
+    function reCalculate() {
+        if (!startDateStr || leaveQueue.length === 0) { resetStats(); return; }
+        let curr = new Date(startDateStr + 'T00:00:00');
+        
+        leaveQueue.forEach((type, idx) => {
+            if (idx > 0) curr.setDate(curr.getDate() + 1);
+            
+            if (type === 'annual') {
+                // 1. 年假按工作日扣减
+                let rawVal = parseInt(document.getElementById('annualDays').value || 0);
+                let need = Math.min(rawVal, 15);
+                let count = 0;
+                
+                while (count < need) {
+                    const t = getDayType(curr);
+                    // 只有工作日（普通工作日或调休上班日）才计入工作日扣减
+                    if (t === 'normal' || t === 'workday-override') {
+                        count++;
+                    }
+                    if (count < need) {
+                        curr.setDate(curr.getDate() + 1);
+                    }
+                }
+                
+                // 2. 截止日期顺延逻辑：如果当前日期的下一天是“非工作日”（周末或法定节假日），自动延伸至工作日前一日
+                let nextDay = new Date(curr);
+                nextDay.setDate(nextDay.getDate() + 1);
+                
+                while (getDayType(nextDay) === 'weekend' || getDayType(nextDay) === 'holiday') {
+                    curr.setDate(curr.getDate() + 1);
+                    nextDay.setDate(nextDay.getDate() + 1);
+                }
+            } else {
+                // 自然日逻辑（任期假、事假、路途假）
+                let d = 0;
+                if (type === 'term') {
+                    d = Math.min(parseInt(document.getElementById('termDays').value || 0), 20);
+                } else if (type === 'personal') {
+                    d = parseInt(document.getElementById('personalDays').value || 0);
+                } else if (type === 'travel') {
+                    d = parseInt(document.getElementById('travelDays').value || 0);
+                }
+                if (d > 0) curr.setDate(curr.getDate() + d - 1);
+            }
+        });
+        
+        finalEndDateStr = curr.toISOString().split('T')[0];
+        checkAndRenderCrossYear(); performStats();
+    }
+
+    function performStats() {
+        let cur = new Date(startDateStr + 'T00:00:00'), last = new Date(finalEndDateStr + 'T00:00:00');
+        let s = { work: 0, holi: 0, week: 0 };
+        while (cur <= last) {
+            const t = getDayType(cur);
+            if (t === 'holiday') s.holi++;
+            else if (t === 'workday-override' || t === 'normal') s.work++;
+            else s.week++;
+            cur.setDate(cur.getDate() + 1);
+        }
+        document.getElementById('resWork').innerText = s.work;
+        document.getElementById('resHoli').innerText = s.holi;
+        document.getElementById('resWeek').innerText = s.week;
+        document.getElementById('resEnd').innerText = finalEndDateStr;
+        refreshUI();
+    }
+
+    function initCalendar() {
+        const year = parseInt(document.getElementById('yearSelect').value);
+        const board = document.getElementById('board');
+        board.innerHTML = '';
+        for (let m = 0; m < 12; m++) renderMonth(year, m);
+        refreshUI();
+    }
+
+    function renderMonth(y, m) {
+        const board = document.getElementById('board');
+        const company = document.getElementById('companySelect').value;
+        const curY = parseInt(document.getElementById('yearSelect').value);
+        const isPredict = (y > curY && !CONFIG[company][y]);
+        const container = document.createElement('div');
+        container.className = 'month-container' + (y > curY ? ' cross-year-month' : '') + (isPredict ? ' month-predict' : '');
+        let html = `<div class="month-title">${y}年 ${m + 1}月${isPredict ? ' (预测)' : ''}</div><div class="days-grid">`;
+        ['一','二','三','四','五','六','日'].forEach(d => html += `<div style="color:#999;font-size:11px">${d}</div>`);
+        const first = new Date(y, m, 1).getDay();
+        for (let i = 0; i < (first === 0 ? 6 : first - 1); i++) html += `<div></div>`;
+        const days = new Date(y, m + 1, 0).getDate();
+        for (let d = 1; d <= days; d++) {
+            const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const t = getDayType(new Date(y, m, d));
+            html += `<div class="day ${t}" data-date="${dateStr}" onclick="handleDateClick('${dateStr}')">${d}</div>`;
+        }
+        container.innerHTML = html + `</div>`;
+        board.appendChild(container);
+    }
+
+    function checkAndRenderCrossYear() {
+        const curY = parseInt(document.getElementById('yearSelect').value);
+        const endYear = new Date(finalEndDateStr + 'T00:00:00').getFullYear();
+        if (endYear > curY && !document.getElementById('predict-marker')) {
+            renderMonth(endYear, 0); renderMonth(endYear, 1);
+            const m = document.createElement('div'); m.id = 'predict-marker'; document.body.appendChild(m);
+        } else if (endYear <= curY) {
+            document.querySelectorAll('.cross-year-month').forEach(e => e.remove());
+            const m = document.getElementById('predict-marker'); if (m) m.remove();
+        }
+    }
+
+    function refreshUI() {
+        document.querySelectorAll('.day').forEach(el => {
+            const d = el.getAttribute('data-date');
+            el.classList.remove('selected-point', 'in-range');
+            if (d === startDateStr || d === finalEndDateStr) el.classList.add('selected-point');
+            if (startDateStr && finalEndDateStr && d > startDateStr && d < finalEndDateStr) el.classList.add('in-range');
+        });
+    }
+
+    function clearSelection() {
+        startDateStr = null; finalEndDateStr = null; leaveQueue = [];
+        document.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
+        document.querySelectorAll('.cross-year-month').forEach(e => e.remove());
+        const m = document.getElementById('predict-marker'); if (m) m.remove();
+        document.getElementById('resStart').innerText = '-';
+        updateSeqBadges(); resetStats(); refreshUI();
+    }
+
+    function resetStats() {
+        document.getElementById('resWork').innerText = '0'; document.getElementById('resHoli').innerText = '0';
+        document.getElementById('resWeek').innerText = '0'; document.getElementById('resEnd').innerText = '-';
+    }
+
+    window.onload = initSelectors;
+</script>
+
+<style>
+  .about-btn { position: fixed; bottom: 20px; right: 20px; padding: 8px 15px; cursor: pointer; opacity: 0.8; border: none; border-radius: 4px; background: var(--primary-color); color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: opacity 0.3s; z-index: 10; }
+  .about-btn:hover { opacity: 1; }
+  .about-dialog { border: none; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); padding: 20px; width: 600px; line-height: 1.6; }
+  .about-dialog::backdrop { background: rgba(0,0,0,0.5); }
+  .about-dialog h3 { margin-top: 0; border-bottom: 1px solid #eee; }
+  .about-dialog button { float: right; margin-top: 10px; cursor: pointer; }
+</style>
+
+<button class="about-btn" onclick="document.getElementById('aboutBox').showModal()">About</button>
+
+<dialog id="aboutBox" class="about-dialog">
+  <h3>关于程序</h3>
+  <p><strong>名称：</strong> 员工休假组合计算系统</p>
+  <p><strong>版本：</strong> v1.0.2</p>
+  <p><strong>开发：</strong> Webber Gemini</p>
+  <p><strong>功能：</strong> 1.选择相应休假类型（有先后次序之分）和天数，点击开始休假日期后，系统自动计算休假结束日期。<br>
+                             2.管理员可配置相应年份的休假和调休日期。</p>
+  <hr>
+  <small>
+    <strong>更新记录：</strong><br>
+    - 2026-10-09: 优化年休假工作日逻辑，自动将非工作日连带顺延至下一个工作日前一天<br>
+    - 2026-07-09: 日历区域独立滚动，保持表头固定<br>
+    - 2026-02-01: 增加自定义假期配置（可增加不同单位、不同年份)<br>
+    - 2026-01-20: 初始版本发布
+  </small>
+  <br>
+  <button onclick="document.getElementById('aboutBox').close()">关闭</button>
+</dialog>
+</body>
+</html>
